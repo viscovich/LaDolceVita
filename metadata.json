@@ -1,0 +1,7 @@
+{
+  "name": "La Dolce Vita - AI Voice Host",
+  "description": "A sophisticated restaurant reservation voice agent with visual table management and optimization algorithms using Gemini Live API.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

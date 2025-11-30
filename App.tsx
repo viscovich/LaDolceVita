@@ -1,7 +1,5 @@
-
-
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { UtensilsCrossed, Clock, Info, Mail, PhoneCall, Calendar as CalendarIcon, Users, MapPin, Car, AlertCircle, ChefHat, Moon, Sun, Sparkles, BookOpen, Smartphone, ShoppingBag, Radio } from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { UtensilsCrossed, Clock, Info, Mail, PhoneCall, Calendar as CalendarIcon, Users, MapPin, Car, AlertCircle, ChefHat, Moon, Sun, Sparkles, BookOpen, Smartphone, ShoppingBag, Radio, Globe } from 'lucide-react';
 import VoiceAgent from './components/VoiceAgent';
 import TableMap from './components/TableMap';
 import { RestaurantManager } from './services/restaurantLogic';
@@ -251,13 +249,6 @@ function App() {
         <div className="lg:col-span-4 flex flex-col gap-6">
           
           <section>
-             <div className="flex items-center justify-between mb-4">
-                <h2 className="text-lg font-semibold flex items-center gap-2 text-slate-200">
-                    <span className="w-1.5 h-6 bg-blue-500 rounded-full"></span>
-                    Agente Telefonico
-                </h2>
-                <span className="text-xs px-2 py-1 bg-blue-500/10 text-blue-400 rounded border border-blue-500/20">VoIP Ready</span>
-             </div>
              <VoiceAgent onToolCall={handleToolCall} />
           </section>
 
@@ -318,6 +309,10 @@ function App() {
                                      <li className="flex gap-2">
                                          <span className="text-emerald-400">✓</span>
                                          <span><strong>Modifiche:</strong> Cerca per nome ("Sono Giulia") e cancella prenotazioni.</span>
+                                     </li>
+                                     <li className="flex gap-2">
+                                         <span className="text-emerald-400"><Globe size={14}/></span>
+                                         <span><strong>Multilingua:</strong> Parla fluentemente qualsiasi lingua (Prova in Inglese, Spagnolo, Cinese...).</span>
                                      </li>
                                 </ul>
                              </div>
@@ -455,18 +450,23 @@ function App() {
                    
                    {/* Date Picker Row - EXPANDED */}
                    <div className="flex items-center gap-2 pb-2">
-                        {/* Native Date Picker Button */}
-                        <div className="relative">
+                        {/* 
+                            Native Date Picker Overlay Trick FIXED:
+                            Input is Z-50 (top) and opacity 0.
+                            Container is relative.
+                            Visual elements are pointer-events-none.
+                        */}
+                        <div className="relative h-[50px] w-[50px] flex-shrink-0 group cursor-pointer bg-slate-800 border border-slate-600 rounded-lg shadow-md hover:bg-slate-700 hover:border-amber-500 transition-colors">
                             <input 
                                 type="date" 
-                                className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
+                                className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"
                                 onChange={(e) => {
                                     if(e.target.value) setSelectedDate(parseInputDate(e.target.value));
                                 }}
                             />
-                            <button className="h-[50px] w-[50px] flex items-center justify-center bg-slate-800 border border-slate-600 rounded-lg text-amber-500 hover:bg-slate-700 hover:border-amber-500 transition-colors">
+                            <div className="absolute inset-0 flex items-center justify-center text-amber-500 pointer-events-none z-10">
                                 <CalendarIcon size={20} />
-                            </button>
+                            </div>
                         </div>
                         
                         {/* Scrollable list of next 14 days */}

@@ -1,9 +1,7 @@
-
-
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { GoogleGenAI, LiveServerMessage, Modality, FunctionDeclaration, Type } from '@google/genai';
-import { Mic, MicOff, Phone, Volume2, Loader2, Sparkles } from 'lucide-react';
-import { createPcmBlob, decodeAudioData, base64ToUint8Array, fetchIntroAudio } from '../services/audioUtils';
+import { Mic, MicOff, Phone, Loader2, Clock } from 'lucide-react';
+import { createPcmBlob, decodeAudioData, base64ToUint8Array } from '../services/audioUtils';
 import { SYSTEM_INSTRUCTION } from '../constants';
 
 // Define the tool schema
@@ -75,9 +73,10 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
   const [isAgentSpeaking, setIsAgentSpeaking] = useState(false);
   const [volume, setVolume] = useState(0); // For visualization
   const [status, setStatus] = useState<'idle' | 'connecting' | 'connected'>('idle');
+  const [timeLeft, setTimeLeft] = useState(120); // 2 Minutes Demo Limit
   
-  // Holds the "Alessia.wav" content (base64 PCM)
-  const [introAudioBase64, setIntroAudioBase64] = useState<string | null>(null);
+  // Holds the "Alessia.wav" content (ArrayBuffer)
+  const [introAudioBuffer, setIntroAudioBuffer] = useState<ArrayBuffer | null>(null);
 
   const audioContextRef = useRef<AudioContext | null>(null);
   const inputContextRef = useRef<AudioContext | null>(null);
@@ -85,19 +84,19 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
   const sessionPromiseRef = useRef<Promise<any> | null>(null);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
   const nextStartTimeRef = useRef<number>(0);
-  const activeRef = useRef(false);
+  
+  // Race condition prevention
+  const connectionIdRef = useRef<string>('');
 
   // Fetch the "Alessia.wav" file on mount
   useEffect(() => {
-      const apiKey = process.env.API_KEY;
-      if(apiKey) {
-          fetchIntroAudio(apiKey).then(base64 => {
-              if (base64) {
-                  console.log("Intro audio loaded.");
-                  setIntroAudioBase64(base64);
-              }
-          });
-      }
+     fetch('/Alessia.wav')
+        .then(response => response.arrayBuffer())
+        .then(buffer => {
+            console.log("Intro audio loaded", buffer.byteLength);
+            setIntroAudioBuffer(buffer);
+        })
+        .catch(err => console.warn("Failed to load intro audio", err));
   }, []);
 
   // Initialize contexts
@@ -114,11 +113,13 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
   };
 
   const playIntroAudio = async () => {
-      if (!introAudioBase64 || !audioContextRef.current) return;
+      if (!introAudioBuffer || !audioContextRef.current) return;
       
       try {
           const audioCtx = audioContextRef.current;
-          const buffer = await decodeAudioData(base64ToUint8Array(introAudioBase64), audioCtx);
+          // Decode the stored buffer
+          const bufferCopy = introAudioBuffer.slice(0);
+          const buffer = await audioCtx.decodeAudioData(bufferCopy);
           
           const source = audioCtx.createBufferSource();
           source.buffer = buffer;
@@ -127,34 +128,89 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
           setIsAgentSpeaking(true); // Visual indicator ON
           
           source.addEventListener('ended', () => {
-               // Only turn off if the live agent hasn't taken over yet (unlikely this fast, but safe)
-               if (sourcesRef.current.size === 0) {
+               if (sourcesRef.current.has(source) && sourcesRef.current.size === 1) {
                    setIsAgentSpeaking(false);
                }
+               sourcesRef.current.delete(source);
           });
           
           source.start(0);
-          // We don't track this source in sourcesRef because we don't want to stop it if the live connection opens
+          sourcesRef.current.add(source); 
       } catch (e) {
           console.error("Failed to play intro", e);
       }
   };
 
+  const disconnect = useCallback(() => {
+    // Invalidate the current connection ID
+    connectionIdRef.current = ''; 
+    
+    setIsConnected(false);
+    setStatus('idle');
+    setTimeLeft(120); // Reset timer
+    
+    if (mediaStreamRef.current) {
+        mediaStreamRef.current.getTracks().forEach(track => track.stop());
+        mediaStreamRef.current = null;
+    }
+    if (inputContextRef.current) {
+        try { inputContextRef.current.close(); } catch(e) {}
+        inputContextRef.current = null;
+    }
+    
+    // Stop all audio immediately
+    sourcesRef.current.forEach(src => {
+        try { src.stop(); src.disconnect(); } catch(e){}
+    });
+    sourcesRef.current.clear();
+    
+    setIsAgentSpeaking(false);
+    setIsSpeaking(false);
+    setVolume(0);
+  }, []);
+
+  // Timer Logic
+  useEffect(() => {
+      let interval: any;
+      if (isConnected && timeLeft > 0) {
+          interval = setInterval(() => {
+              setTimeLeft((prev) => prev - 1);
+          }, 1000);
+      } else if (isConnected && timeLeft === 0) {
+          // Time's up
+          disconnect();
+          alert("Tempo Demo Scaduto (2 min). La chiamata è stata terminata.");
+      }
+      return () => clearInterval(interval);
+  }, [isConnected, timeLeft, disconnect]);
+
   const connect = async () => {
     ensureAudioContext();
-    const apiKey = process.env.API_KEY;
+    
+    let apiKey = '';
+    try {
+        apiKey = process.env.API_KEY || '';
+    } catch (e) {
+        console.error("Error accessing process.env", e);
+    }
+
     if (!apiKey) {
       alert("API Key not found in environment variables");
       return;
     }
 
+    const currentConnectionId = Math.random().toString(36).substring(7);
+    connectionIdRef.current = currentConnectionId;
+
     try {
       setStatus('connecting');
-      activeRef.current = true;
       setIsConnected(true);
+      setTimeLeft(120); // Reset timer on connect
       
-      // 1. PLAY INTRO IMMEDIATELY (Simulating "Alessia.wav")
-      playIntroAudio();
+      // 1. PLAY INTRO IMMEDIATELY
+      if (introAudioBuffer) {
+          playIntroAudio();
+      }
 
       // 2. CONNECT LIVE IN BACKGROUND
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -171,7 +227,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
         },
         callbacks: {
           onopen: () => {
-            if (!activeRef.current) return;
+            if (connectionIdRef.current !== currentConnectionId) return;
             console.log("Connection opened");
             setStatus('connected');
             
@@ -181,7 +237,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
             const processor = inputContextRef.current.createScriptProcessor(4096, 1, 1);
             
             processor.onaudioprocess = (e) => {
-              if (!activeRef.current) return;
+              if (connectionIdRef.current !== currentConnectionId) return;
 
               const inputData = e.inputBuffer.getChannelData(0);
               
@@ -196,7 +252,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
 
               const pcmBlob = createPcmBlob(inputData);
               sessionPromise.then(session => {
-                  if (activeRef.current) {
+                  if (connectionIdRef.current === currentConnectionId) {
                       session.sendRealtimeInput({ media: pcmBlob });
                   }
               });
@@ -206,7 +262,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
             processor.connect(inputContextRef.current.destination);
           },
           onmessage: async (message: LiveServerMessage) => {
-            if (!activeRef.current) return;
+            if (connectionIdRef.current !== currentConnectionId) return;
 
             // Handle Audio
             const audioData = message.serverContent?.modelTurn?.parts?.[0]?.inlineData?.data;
@@ -246,7 +302,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
             if (message.toolCall) {
                 for (const fc of message.toolCall.functionCalls) {
                     const result = await onToolCall(fc.name, fc.args);
-                    if (activeRef.current) {
+                    if (connectionIdRef.current === currentConnectionId) {
                         sessionPromise.then(session => session.sendToolResponse({
                             functionResponses: {
                                 id: fc.id,
@@ -259,13 +315,13 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
             }
           },
           onclose: () => {
-            if (activeRef.current) {
+            if (connectionIdRef.current === currentConnectionId) {
                 setIsConnected(false);
                 setStatus('idle');
             }
           },
           onerror: (err) => {
-            if (activeRef.current) {
+            if (connectionIdRef.current === currentConnectionId) {
                 setIsConnected(false);
                 setStatus('idle');
             }
@@ -277,32 +333,19 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
     } catch (err) {
       console.error("Failed to connect", err);
       alert("Microphone access denied or connection failed.");
-      activeRef.current = false;
-      setStatus('idle');
+      if (connectionIdRef.current === currentConnectionId) {
+          setIsConnected(false);
+          setStatus('idle');
+      }
     }
   };
 
-  const disconnect = useCallback(() => {
-    activeRef.current = false;
-    setIsConnected(false);
-    setStatus('idle');
-    
-    if (mediaStreamRef.current) {
-        mediaStreamRef.current.getTracks().forEach(track => track.stop());
-        mediaStreamRef.current = null;
-    }
-    if (inputContextRef.current) {
-        try { inputContextRef.current.close(); } catch(e) {}
-        inputContextRef.current = null;
-    }
-    sourcesRef.current.forEach(src => {
-        try { src.stop(); src.disconnect(); } catch(e){}
-    });
-    sourcesRef.current.clear();
-    setIsAgentSpeaking(false);
-    setIsSpeaking(false);
-    setVolume(0);
-  }, []);
+  // Helper to format time
+  const formatTimer = (seconds: number) => {
+      const m = Math.floor(seconds / 60);
+      const s = seconds % 60;
+      return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
 
   return (
@@ -317,108 +360,111 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
                 {isConnected ? "Alessia" : "La Dolce Vita"}
             </h3>
             <div className="h-6 flex items-center justify-center mt-2">
-                 {status === 'connecting' && <span className="text-amber-500 text-xs animate-pulse font-mono">CONNESSIONE...</span>}
-                 {status === 'connected' && (
-                     isAgentSpeaking 
-                     ? <span className="text-amber-400 text-xs font-bold tracking-widest animate-pulse">PARLANDO</span>
-                     : <span className="text-emerald-400 text-xs font-bold tracking-widest">IN ASCOLTO</span>
-                 )}
+                 {status === 'connecting' && <span className="text-xs text-amber-400 flex items-center gap-1"><Loader2 size={10} className="animate-spin"/> Connessione in corso...</span>}
+                 {status === 'connected' && isAgentSpeaking && <span className="text-xs text-amber-400 font-bold tracking-widest animate-pulse">PARLANDO</span>}
+                 {status === 'connected' && !isAgentSpeaking && <span className="text-xs text-emerald-400 font-bold tracking-widest">IN ASCOLTO</span>}
             </div>
         </div>
 
-        {/* ORB VISUALIZER CONTAINER */}
-        <div className="relative z-10 w-48 h-48 flex items-center justify-center mb-10">
+        {/* ORB VISUALIZER */}
+        <div className="relative z-10 w-48 h-48 flex items-center justify-center mb-6">
             
-            {/* INTERACTIVE CLICK AREA (Main Button) */}
-            <button 
-                onClick={isConnected ? disconnect : connect}
-                disabled={status === 'connecting'}
-                className="relative w-32 h-32 rounded-full flex items-center justify-center transition-all focus:outline-none group"
-            >
-                {/* 1. Ambient Glow (Always there) - NON-INTERACTIVE */}
-                <div className={`absolute inset-0 rounded-full blur-2xl transition-all duration-1000 pointer-events-none
-                    ${isConnected 
-                        ? (isAgentSpeaking ? 'bg-amber-600/60 scale-125' : 'bg-emerald-600/40 scale-110') 
-                        : 'bg-slate-700/30 scale-90 group-hover:bg-slate-600/50'
-                    }`} 
-                />
+            {/* 1. Base Idle Orb Background */}
+            <div className={`absolute inset-0 rounded-full transition-all duration-700 ${isConnected ? 'opacity-0' : 'opacity-100'}`}></div>
 
-                {/* 2. RIPPLES (User Speaking) - NON-INTERACTIVE */}
-                {isConnected && !isAgentSpeaking && (
-                    <>
-                        <div className="absolute inset-0 rounded-full border border-emerald-400/30 transition-transform duration-75 ease-out pointer-events-none"
-                             style={{ transform: `scale(${1 + (volume / 100) * 1.8})` }} />
-                        <div className="absolute inset-0 rounded-full border border-emerald-400/10 transition-transform duration-100 ease-out pointer-events-none"
-                             style={{ transform: `scale(${1 + (volume / 100) * 2.5})` }} />
-                         <div className="absolute inset-0 rounded-full border border-emerald-400/5 transition-transform duration-150 ease-out pointer-events-none"
-                             style={{ transform: `scale(${1 + (volume / 100) * 3.5})` }} />
-                    </>
-                )}
+            {/* 2. Agent Speaking Mode (Golden Glow) */}
+            <div className={`absolute inset-0 rounded-full bg-amber-500/10 blur-xl transition-all duration-300 pointer-events-none ${isAgentSpeaking ? 'opacity-100 scale-150' : 'opacity-0 scale-100'}`}></div>
+            <div className={`absolute inset-0 rounded-full border-2 border-amber-500/30 transition-all duration-300 pointer-events-none ${isAgentSpeaking ? 'opacity-100 scale-110' : 'opacity-0 scale-95'}`}></div>
 
-                {/* 3. PULSE (Agent Speaking) - NON-INTERACTIVE */}
-                {/* Critical Fix: pointer-events-none ensures this large animation doesn't block clicks on the Hang Up button below */}
-                {isConnected && isAgentSpeaking && (
-                    <>
-                        <div className="absolute inset-0 rounded-full border-2 border-amber-500/30 animate-[ping_2s_cubic-bezier(0,0,0.2,1)_infinite] pointer-events-none" />
-                        <div className="absolute inset-0 rounded-full border border-amber-500/20 animate-[ping_2.5s_cubic-bezier(0,0,0.2,1)_infinite_0.5s] pointer-events-none" />
-                    </>
-                )}
+            {/* 3. User Speaking Mode (Emerald Pulse) */}
+            {/* Responsive rings based on volume */}
+            <div 
+                className={`absolute inset-0 rounded-full border border-emerald-500/20 bg-emerald-500/5 transition-transform duration-75 pointer-events-none ${isConnected && !isAgentSpeaking ? 'opacity-100' : 'opacity-0'}`}
+                style={{ transform: `scale(${1 + volume / 50})` }}
+            ></div>
+             <div 
+                className={`absolute inset-0 rounded-full border border-emerald-500/10 bg-emerald-500/5 transition-transform duration-100 delay-75 pointer-events-none ${isConnected && !isAgentSpeaking ? 'opacity-100' : 'opacity-0'}`}
+                style={{ transform: `scale(${1 + volume / 30})` }}
+            ></div>
 
-                {/* 4. CORE SPHERE (The Main UI) */}
-                <div className={`relative z-20 w-32 h-32 rounded-full flex items-center justify-center shadow-[inset_0_2px_20px_rgba(255,255,255,0.1)] backdrop-blur-sm border transition-all duration-500 overflow-hidden
+            {/* 4. Core Button / Orb */}
+            <button
+                onClick={isConnected ? undefined : connect}
+                className={`relative w-24 h-24 rounded-full flex items-center justify-center transition-all duration-700 shadow-2xl z-30 group overflow-hidden
                     ${isConnected 
                         ? (isAgentSpeaking 
-                            ? 'bg-gradient-to-br from-amber-900/80 to-slate-900 border-amber-500/50 shadow-[0_0_30px_rgba(245,158,11,0.3)]' 
-                            : 'bg-gradient-to-br from-emerald-900/80 to-slate-900 border-emerald-500/50 shadow-[0_0_30px_rgba(16,185,129,0.2)]')
-                        : 'bg-gradient-to-br from-slate-800 to-slate-950 border-slate-700 group-hover:border-slate-500 shadow-xl'
-                    }`}
-                >
-                    {status === 'connecting' ? (
-                        <Loader2 className="w-10 h-10 text-white animate-spin opacity-80" />
-                    ) : isConnected ? (
-                        isAgentSpeaking ? (
-                            // EQUALIZER ANIMATION (CSS based)
-                            <div className="flex items-center gap-1.5 h-12">
-                                <div className="w-1.5 bg-amber-400 rounded-full animate-music-wave" style={{ animationDelay: '0ms' }}></div>
-                                <div className="w-1.5 bg-amber-300 rounded-full animate-music-wave" style={{ animationDelay: '150ms' }}></div>
-                                <div className="w-1.5 bg-amber-200 rounded-full animate-music-wave" style={{ animationDelay: '300ms' }}></div>
-                                <div className="w-1.5 bg-amber-300 rounded-full animate-music-wave" style={{ animationDelay: '150ms' }}></div>
-                                <div className="w-1.5 bg-amber-400 rounded-full animate-music-wave" style={{ animationDelay: '0ms' }}></div>
-                            </div>
-                        ) : (
-                            // MIC ICON (Scales slightly)
-                            <Mic className="w-10 h-10 text-emerald-400 drop-shadow-lg transition-transform duration-75" 
-                                 style={{ transform: `scale(${1 + volume/300})`}} 
-                            />
-                        )
-                    ) : (
-                        // IDLE PHONE ICON
-                        <div className="flex flex-col items-center gap-1 group-hover:scale-110 transition-transform duration-300">
-                             <Phone className="w-8 h-8 text-slate-300 fill-slate-300/20" />
-                             <span className="text-[9px] font-bold text-slate-400 tracking-[0.2em] uppercase">CHIAMA</span>
-                        </div>
-                    )}
-                </div>
+                            ? 'bg-amber-900/80 border-2 border-amber-500/50' 
+                            : 'bg-slate-900/90 border-2 border-emerald-500/50') 
+                        : 'border border-amber-500/30 hover:scale-105 active:scale-95 animate-[pulse_4s_ease-in-out_infinite]'}
+                `}
+                style={!isConnected ? {
+                    background: 'radial-gradient(circle at 30% 30%, rgba(251, 191, 36, 1) 0%, rgba(245, 158, 11, 1) 40%, rgba(180, 83, 9, 1) 80%)',
+                    boxShadow: 'inset -4px -4px 10px rgba(0,0,0,0.4), inset 4px 4px 10px rgba(255,255,255,0.4), 0 0 20px rgba(245, 158, 11, 0.4)'
+                } : undefined}
+            >
+                {isConnected ? (
+                     // Connected State Icon
+                     isAgentSpeaking ? (
+                         // Wave animation
+                         <div className="flex items-end gap-1 h-8">
+                             <div className="w-1 bg-amber-400 rounded-full animate-music-wave" style={{ animationDelay: '0s' }}></div>
+                             <div className="w-1 bg-amber-400 rounded-full animate-music-wave" style={{ animationDelay: '0.1s' }}></div>
+                             <div className="w-1 bg-amber-400 rounded-full animate-music-wave" style={{ animationDelay: '0.2s' }}></div>
+                             <div className="w-1 bg-amber-400 rounded-full animate-music-wave" style={{ animationDelay: '0.3s' }}></div>
+                         </div>
+                     ) : (
+                         <Mic className={`w-8 h-8 transition-colors ${isSpeaking ? 'text-emerald-400' : 'text-slate-500'}`} />
+                     )
+                ) : (
+                    // Idle State Icon (Glassy Orb look)
+                    <Phone className="w-8 h-8 text-amber-950 drop-shadow-md" />
+                )}
+                
+                {/* Glossy reflection for the orb */}
+                {!isConnected && (
+                    <div className="absolute top-2 left-3 w-8 h-4 bg-white/30 rounded-[100%] rotate-[-15deg] blur-[1px]"></div>
+                )}
             </button>
+
         </div>
 
-        {/* CONTROLS */}
-        {/* z-20 ensures controls sit ON TOP of any spilling orb animations */}
-        <div className="relative z-20 w-full px-4">
-             {isConnected ? (
-                 <div className="flex justify-center gap-4">
-                    <button 
-                        onClick={disconnect}
-                        className="flex-1 py-3 bg-red-500/10 hover:bg-red-500/20 border border-red-500/30 text-red-400 rounded-xl text-sm font-medium transition-colors flex items-center justify-center gap-2 shadow-lg"
-                    >
-                        <MicOff size={16} /> Termina Chiamata
-                    </button>
+        {/* COUNTDOWN TIMER */}
+        {isConnected && (
+            <div className={`relative z-20 mb-6 flex flex-col items-center gap-1 ${timeLeft < 30 ? 'text-rose-500 animate-pulse' : 'text-slate-400'}`}>
+                <div className="flex items-center gap-2 text-xs font-mono font-medium">
+                    <Clock size={12} />
+                    <span>Tempo Demo: {formatTimer(timeLeft)}</span>
+                </div>
+                {/* Progress bar */}
+                <div className="w-24 h-1 bg-slate-800 rounded-full overflow-hidden">
+                    <div 
+                        className={`h-full transition-all duration-1000 ${timeLeft < 30 ? 'bg-rose-500' : 'bg-emerald-500'}`} 
+                        style={{ width: `${(timeLeft / 120) * 100}%` }}
+                    ></div>
+                </div>
+            </div>
+        )}
+
+        {/* Action Buttons */}
+        <div className="relative z-20 min-h-[60px] flex justify-center">
+            {isConnected ? (
+                 <button 
+                    onClick={disconnect}
+                    className="flex items-center gap-2 bg-rose-600 hover:bg-rose-700 text-white px-8 py-3 rounded-full font-medium transition-all shadow-lg shadow-rose-900/20 active:scale-95 z-20 relative pointer-events-auto"
+                 >
+                    <MicOff size={18} />
+                    Termina Chiamata
+                 </button>
+            ) : (
+                 <div className="text-amber-500/80 text-sm font-medium tracking-wide animate-pulse">
+                    Tocca la sfera per iniziare
                  </div>
-             ) : (
-                 <p className="text-center text-slate-500 text-xs">
-                     {introAudioBase64 ? "Tocca la sfera per iniziare." : "Caricamento Voce..."}
-                 </p>
-             )}
+            )}
+        </div>
+        
+        {/* Helper Text */}
+        <div className="absolute bottom-4 text-[10px] text-slate-600 font-mono text-center w-full pointer-events-none">
+            {isConnected ? "Live Session Active" : (introAudioBuffer ? "Ready to call" : "Audio resource loading...")}
         </div>
 
     </div>

@@ -24,10 +24,20 @@ const startOfDay = (date: Date) => {
 };
 
 const parseInputDate = (dateStr: string) => {
+    if (!dateStr) return new Date(); // Fallback to today
     // Parse YYYY-MM-DD as local date
-    const [y, m, d] = dateStr.split('-').map(Number);
+    const parts = dateStr.split('-').map(Number);
+    if (parts.length !== 3) return new Date();
+    const [y, m, d] = parts;
     return new Date(y, m - 1, d);
 };
+
+// Helper to get defaults
+const getDefaultDateStr = () => new Date().toISOString().split('T')[0];
+const getDefaultTimeStr = () => {
+    const d = new Date();
+    return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+}
 
 function App() {
   // Dates
@@ -86,19 +96,63 @@ function App() {
       return date.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' });
   };
 
+  // Improved calculation logic that returns details
+  const calculateDetails = (itemNames: string[]) => {
+      const allMenu = [
+          ...RESTAURANT_INFO.menu.specials,
+          ...RESTAURANT_INFO.menu.antipasti,
+          ...RESTAURANT_INFO.menu.primi,
+          ...RESTAURANT_INFO.menu.secondi,
+          ...RESTAURANT_INFO.menu.contorni,
+          ...RESTAURANT_INFO.menu.dessert,
+          ...RESTAURANT_INFO.menu.vini
+      ];
+
+      const foundItems: string[] = [];
+      const detailedItems: string[] = [];
+      const missingItems: string[] = [];
+      let total = 0;
+
+      for (const reqName of itemNames) {
+          const reqLower = reqName.toLowerCase();
+          
+          // Try exact match first, then strict containment
+          // "Risotto" should match "Risotto alla Milanese" AND "Risotto al Tartufo".
+          // But if both exist, we need to be careful. For now, we take the best match.
+          
+          const match = allMenu.find(m => m.name.toLowerCase() === reqLower) ||
+                        allMenu.find(m => m.name.toLowerCase().includes(reqLower) || reqLower.includes(m.name.toLowerCase()));
+
+          if (match) {
+              const price = parseFloat(match.price.replace('€', '').trim());
+              total += price;
+              foundItems.push(match.name);
+              detailedItems.push(`${match.name} (${match.price})`);
+          } else {
+              missingItems.push(reqName);
+          }
+      }
+
+      return { total, foundItems, detailedItems, missingItems };
+  };
+
   // --- Tool Handlers for Voice Agent ---
 
   const handleToolCall = useCallback(async (name: string, args: any) => {
     console.log(`Executing tool: ${name}`, args);
 
     if (name === 'checkAvailability') {
-      const { partySize, date, time } = args as CheckAvailabilityArgs;
+      let { partySize, date, time } = args as CheckAvailabilityArgs;
       
+      // Default guards
+      if (!date) date = getDefaultDateStr();
+      if (!time) time = getDefaultTimeStr();
+
       const result = manager.findTableForRequest(partySize, date, time);
       
       // Auto-switch visual shift based on requested time
-      const [reqHour, reqMin] = time.split(':').map(Number);
-      if (reqHour >= 21 && reqMin >= 15) {
+      const parts = (time || "").split(':').map(Number);
+      if (parts.length === 2 && parts[0] >= 21 && parts[1] >= 15) {
           setActiveShift('turn2');
       } else {
           setActiveShift('turn1');
@@ -122,9 +176,33 @@ function App() {
       }
     }
 
+    if (name === 'calculateQuote') {
+        const { items } = args;
+        const { total, foundItems, detailedItems, missingItems } = calculateDetails(items || []);
+
+        if (missingItems.length > 0) {
+            return { 
+                success: false, 
+                message: `ATTENZIONE: Non ho trovato nel menu: ${missingItems.join(', ')}. Ho trovato solo: ${foundItems.join(', ')}`,
+                foundItems 
+            };
+        }
+
+        return {
+            success: true,
+            totalPrice: `€${total}`,
+            itemDetails: detailedItems.join(', '),
+            message: `PREVENTIVO AGGIORNATO: La lista completa comprende [${foundItems.join(', ')}]. Il totale matematico è ESATTAMENTE €${total}. Dettaglio: ${detailedItems.join(', ')}.`
+        };
+    }
+
     if (name === 'makeReservation') {
-      const { partySize, date, time, customerName, contactInfo, notes, type = 'dine-in' } = args as MakeReservationArgs;
+      let { partySize, date, time, customerName, contactInfo, notes, type = 'dine-in', items = [] } = args as MakeReservationArgs;
       
+      // Default guards
+      if (!date) date = getDefaultDateStr();
+      if (!time) time = getDefaultTimeStr();
+
       // Check if it was a manager request
       if (notes === "RICHIEDE_RICHIAMATA_MANAGER" || notes === "REQUIRES_MANAGER_CALLBACK") {
           setLastNotification({ msg: `RICHIESTA SUPPORTO: ${customerName} (${partySize} pax) @ ${contactInfo}`, type: 'alert' });
@@ -133,12 +211,24 @@ function App() {
 
       let tableIds: string[] = [];
       let duration = 90;
+      let orderTotal = "";
+      let finalNotes = notes || "";
 
       // Logic split based on type
       if (type === 'takeaway') {
           // Takeaway logic
           duration = 30; // standard prep time placeholder
-          // We do not assign tables for takeaway
+          
+          // Re-calculate to be safe (ensure consistency)
+          const { total, foundItems, missingItems } = calculateDetails(items);
+          
+          if (missingItems.length > 0) {
+               return { success: false, message: `Cannot proceed. Items not found: ${missingItems.join(', ')}` };
+          }
+          
+          orderTotal = `€${total}`;
+          finalNotes = `Ordine: ${foundItems.join(', ')}`;
+
       } else {
           // Dine-in logic
           const result = manager.findTableForRequest(partySize, date, time);
@@ -157,7 +247,7 @@ function App() {
           startTime: new Date(`${date} ${time}`),
           durationMinutes: duration,
           tableIds: tableIds,
-          notes,
+          notes: finalNotes,
           type
         };
         
@@ -168,18 +258,22 @@ function App() {
         
         // Sync UI to reservation details
         setSelectedDate(parseInputDate(date));
-        const [reqHour, reqMin] = time.split(':').map(Number);
-        if (reqHour >= 21 && reqMin >= 15) {
-            setActiveShift('turn2');
-        } else {
-            setActiveShift('turn1');
+        
+        const parts = time.split(':').map(Number);
+        if (parts.length === 2) {
+             const [reqHour, reqMin] = parts;
+             if (reqHour >= 21 && reqMin >= 15) {
+                setActiveShift('turn2');
+            } else {
+                setActiveShift('turn1');
+            }
         }
 
-        const msg = type === 'takeaway' ? `Ordine Asporto: ${customerName}` : `Prenotazione Confermata: ${customerName}`;
+        const msg = type === 'takeaway' ? `Ordine Asporto (${orderTotal}): ${customerName}` : `Prenotazione Confermata: ${customerName}`;
         setLastNotification({ msg, type: 'success' });
         setTimeout(() => setLastNotification(null), 5000);
 
-        return { success: true, reservationId: newRes.id };
+        return { success: true, reservationId: newRes.id, totalCost: orderTotal };
     }
 
     if (name === 'cancelReservation') {
@@ -199,7 +293,8 @@ function App() {
     }
 
     if (name === 'getInfo') {
-        return { success: true };
+        // Return full info to ground the AI
+        return { success: true, info: RESTAURANT_INFO };
     }
 
     return { error: "Unknown tool" };
@@ -300,7 +395,7 @@ function App() {
                                      </li>
                                      <li className="flex gap-2">
                                          <span className="text-emerald-400">✓</span>
-                                         <span><strong>Info & Servizi:</strong> Conosce Orari, Chiusure, Parcheggio, Asporto e Allergie.</span>
+                                         <span><strong>Gestione Ordini da Asporto:</strong> Prende l'ordine e calcola il totale esatto.</span>
                                      </li>
                                      <li className="flex gap-2">
                                          <span className="text-emerald-400">✓</span>

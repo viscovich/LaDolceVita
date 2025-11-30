@@ -19,9 +19,21 @@ const checkAvailabilityTool: FunctionDeclaration = {
   },
 };
 
+const calculateQuoteTool: FunctionDeclaration = {
+    name: 'calculateQuote',
+    description: 'Calculate the total price for a list of items BEFORE making a reservation. ALWAYS use this for takeaway orders first.',
+    parameters: {
+        type: Type.OBJECT,
+        properties: {
+            items: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of dish names ordered by the user." }
+        },
+        required: ['items']
+    }
+};
+
 const makeReservationTool: FunctionDeclaration = {
   name: 'makeReservation',
-  description: 'Finalize a reservation or a takeaway order.',
+  description: 'Finalize a reservation or a takeaway order AFTER confirmation.',
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -31,7 +43,8 @@ const makeReservationTool: FunctionDeclaration = {
       customerName: { type: Type.STRING },
       contactInfo: { type: Type.STRING, description: "Phone number" },
       notes: { type: Type.STRING },
-      type: { type: Type.STRING, enum: ['dine-in', 'takeaway'], description: "Type of reservation: dine-in (default) or takeaway (food pickup)" }
+      type: { type: Type.STRING, enum: ['dine-in', 'takeaway'], description: "Type of reservation: dine-in (default) or takeaway (food pickup)" },
+      items: { type: Type.ARRAY, items: { type: Type.STRING }, description: "List of dish names for takeaway orders to calculate total price." }
     },
     required: ['partySize', 'date', 'time', 'customerName', 'contactInfo'],
   },
@@ -185,8 +198,6 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
   }, [isConnected, timeLeft, disconnect]);
 
   const connect = async () => {
-    ensureAudioContext();
-    
     let apiKey = '';
     try {
         apiKey = process.env.API_KEY || '';
@@ -198,6 +209,8 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
       alert("API Key not found in environment variables");
       return;
     }
+    
+    ensureAudioContext();
 
     const currentConnectionId = Math.random().toString(36).substring(7);
     connectionIdRef.current = currentConnectionId;
@@ -223,7 +236,7 @@ const VoiceAgent: React.FC<VoiceAgentProps> = ({ onToolCall }) => {
           systemInstruction: SYSTEM_INSTRUCTION,
           responseModalities: [Modality.AUDIO],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } } },
-          tools: [{ functionDeclarations: [checkAvailabilityTool, makeReservationTool, getInfoTool, cancelReservationTool] }],
+          tools: [{ functionDeclarations: [checkAvailabilityTool, makeReservationTool, getInfoTool, cancelReservationTool, calculateQuoteTool] }],
         },
         callbacks: {
           onopen: () => {

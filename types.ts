@@ -57,6 +57,7 @@ export interface MakeReservationArgs extends CheckAvailabilityArgs {
   contactInfo: string;
   notes?: string;
   type?: 'dine-in' | 'takeaway';
+  items?: string[]; // For takeaway orders: list of dish names
 }
 
 export interface CancelReservationArgs {

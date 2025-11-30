@@ -42,6 +42,12 @@ export class RestaurantManager {
 
   // THE ALGORITHM: Find best configuration
   findTableForRequest(partySize: number, dateStr: string, timeStr: string): { tableIds: string[], score: number, requiresManager?: boolean } | null {
+    // SAFETY CHECK: Prevent crashes if args are missing
+    if (!dateStr || !timeStr) {
+        console.warn("findTableForRequest called with missing date or time", { dateStr, timeStr });
+        return null;
+    }
+
     // RULE: Large groups require manager
     if (partySize >= 10) {
         return { tableIds: [], score: 0, requiresManager: true };

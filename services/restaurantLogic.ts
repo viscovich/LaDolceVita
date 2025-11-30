@@ -1,7 +1,16 @@
-
-
 import { Table, Reservation, TableStatus } from '../types';
-import { differenceInMinutes, addMinutes, isWithinInterval, startOfDay, format, isSameDay } from 'date-fns';
+
+// Helper: Add minutes to a date
+const addMinutes = (date: Date, minutes: number): Date => {
+  return new Date(date.getTime() + minutes * 60000);
+};
+
+// Helper: Check if two dates are the same calendar day
+const isSameDay = (d1: Date, d2: Date): boolean => {
+  return d1.getFullYear() === d2.getFullYear() &&
+         d1.getMonth() === d2.getMonth() &&
+         d1.getDate() === d2.getDate();
+};
 
 export class RestaurantManager {
   private tables: Table[];
@@ -38,10 +47,11 @@ export class RestaurantManager {
         return { tableIds: [], score: 0, requiresManager: true };
     }
 
-    // Manual parsing to avoid date-fns 'parse' import issues
+    // Manual parsing to avoid dependency issues
     // dateStr: YYYY-MM-DD, timeStr: HH:mm
     const [year, month, day] = dateStr.split('-').map(Number);
     const [hour, minute] = timeStr.split(':').map(Number);
+    // Note: Month is 0-indexed in JS Date
     const startTime = new Date(year, month - 1, day, hour, minute);
 
     const duration = 90; // Standard dining time

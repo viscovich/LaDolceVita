@@ -1,12 +1,35 @@
 
+
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { addDays, isSameDay, startOfDay } from 'date-fns';
 import { UtensilsCrossed, Clock, Info, Mail, PhoneCall, Calendar as CalendarIcon, Users, MapPin, Car, AlertCircle, ChefHat, Moon, Sun, Sparkles, BookOpen, Smartphone, ShoppingBag, Radio } from 'lucide-react';
 import VoiceAgent from './components/VoiceAgent';
 import TableMap from './components/TableMap';
 import { RestaurantManager } from './services/restaurantLogic';
 import { INITIAL_TABLES, INITIAL_RESERVATIONS, RESTAURANT_NAME, RESTAURANT_INFO } from './constants';
 import { TableStatus, Reservation, CheckAvailabilityArgs, MakeReservationArgs, GetInfoArgs, CancelReservationArgs } from './types';
+
+// --- Native Date Helpers to replace date-fns ---
+const addDays = (date: Date, days: number) => {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+};
+
+const isSameDay = (d1: Date, d2: Date) => {
+  return d1.getFullYear() === d2.getFullYear() &&
+         d1.getMonth() === d2.getMonth() &&
+         d1.getDate() === d2.getDate();
+};
+
+const startOfDay = (date: Date) => {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+};
+
+const parseInputDate = (dateStr: string) => {
+    // Parse YYYY-MM-DD as local date
+    const [y, m, d] = dateStr.split('-').map(Number);
+    return new Date(y, m - 1, d);
+};
 
 function App() {
   // Dates
@@ -84,7 +107,7 @@ function App() {
       }
 
       // Sync date
-      setSelectedDate(new Date(date));
+      setSelectedDate(parseInputDate(date));
 
       if (result?.requiresManager) {
            setLastNotification({ msg: `Gruppo di ${partySize} richiede richiamata Manager.`, type: 'alert' });
@@ -102,7 +125,7 @@ function App() {
     }
 
     if (name === 'makeReservation') {
-      const { partySize, date, time, customerName, contactInfo, notes } = args as MakeReservationArgs;
+      const { partySize, date, time, customerName, contactInfo, notes, type = 'dine-in' } = args as MakeReservationArgs;
       
       // Check if it was a manager request
       if (notes === "RICHIEDE_RICHIAMATA_MANAGER" || notes === "REQUIRES_MANAGER_CALLBACK") {
@@ -110,18 +133,34 @@ function App() {
           return { success: true, message: "Manager will call back." };
       }
 
-      const result = manager.findTableForRequest(partySize, date, time);
+      let tableIds: string[] = [];
+      let duration = 90;
+
+      // Logic split based on type
+      if (type === 'takeaway') {
+          // Takeaway logic
+          duration = 30; // standard prep time placeholder
+          // We do not assign tables for takeaway
+      } else {
+          // Dine-in logic
+          const result = manager.findTableForRequest(partySize, date, time);
+          if (result && result.tableIds.length > 0) {
+              tableIds = result.tableIds;
+          } else {
+             return { success: false, message: "Availability changed, please check again." };
+          }
+      }
       
-      if (result && result.tableIds.length > 0) {
-        const newRes: Reservation = {
+      const newRes: Reservation = {
           id: Math.random().toString(36).substr(2, 9),
           customerName,
           contactInfo,
-          partySize,
+          partySize: type === 'takeaway' ? 0 : partySize,
           startTime: new Date(`${date} ${time}`),
-          durationMinutes: 90,
-          tableIds: result.tableIds,
-          notes
+          durationMinutes: duration,
+          tableIds: tableIds,
+          notes,
+          type
         };
         
         manager.addReservation(newRes);
@@ -130,7 +169,7 @@ function App() {
         setHighlightedTables([]); 
         
         // Sync UI to reservation details
-        setSelectedDate(new Date(date));
+        setSelectedDate(parseInputDate(date));
         const [reqHour, reqMin] = time.split(':').map(Number);
         if (reqHour >= 21 && reqMin >= 15) {
             setActiveShift('turn2');
@@ -138,13 +177,11 @@ function App() {
             setActiveShift('turn1');
         }
 
-        setLastNotification({ msg: `Prenotazione Confermata: ${customerName}`, type: 'success' });
+        const msg = type === 'takeaway' ? `Ordine Asporto: ${customerName}` : `Prenotazione Confermata: ${customerName}`;
+        setLastNotification({ msg, type: 'success' });
         setTimeout(() => setLastNotification(null), 5000);
 
         return { success: true, reservationId: newRes.id };
-      } else {
-        return { success: false, message: "Availability changed, please check again." };
-      }
     }
 
     if (name === 'cancelReservation') {
@@ -424,7 +461,7 @@ function App() {
                                 type="date" 
                                 className="absolute inset-0 opacity-0 cursor-pointer w-full h-full"
                                 onChange={(e) => {
-                                    if(e.target.value) setSelectedDate(new Date(e.target.value));
+                                    if(e.target.value) setSelectedDate(parseInputDate(e.target.value));
                                 }}
                             />
                             <button className="h-[50px] w-[50px] flex items-center justify-center bg-slate-800 border border-slate-600 rounded-lg text-amber-500 hover:bg-slate-700 hover:border-amber-500 transition-colors">
@@ -510,21 +547,32 @@ function App() {
                         </div>
                     ) : (
                         visibleReservations.sort((a,b) => a.startTime.getTime() - b.startTime.getTime()).map(res => (
-                            <div key={res.id} className="group flex justify-between items-center p-3 bg-slate-800/40 hover:bg-slate-800 rounded-xl border border-slate-700/50 hover:border-slate-600 transition-all">
+                            <div key={res.id} className={`group flex justify-between items-center p-3 rounded-xl border transition-all ${res.type === 'takeaway' ? 'bg-indigo-900/20 border-indigo-500/30 hover:bg-indigo-900/30' : 'bg-slate-800/40 border-slate-700/50 hover:bg-slate-800 hover:border-slate-600'}`}>
                                 <div className="flex items-center gap-3">
-                                    <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 font-bold text-xs">
-                                        {res.customerName.charAt(0)}
-                                    </div>
+                                    {res.type === 'takeaway' ? (
+                                        <div className="w-8 h-8 rounded-full bg-indigo-900/50 flex items-center justify-center text-indigo-400 shadow-[0_0_10px_rgba(99,102,241,0.3)]">
+                                            <ShoppingBag size={14} />
+                                        </div>
+                                    ) : (
+                                        <div className="w-8 h-8 rounded-full bg-slate-700 flex items-center justify-center text-slate-300 font-bold text-xs">
+                                            {res.customerName.charAt(0)}
+                                        </div>
+                                    )}
+                                    
                                     <div>
                                         <div className="font-medium text-sm text-slate-200">{res.customerName}</div>
                                         <div className="text-[10px] text-slate-400 flex items-center gap-2">
-                                            <Users size={10} /> {res.partySize}p
+                                            {res.type === 'takeaway' ? (
+                                                <span className="text-indigo-300 font-semibold uppercase tracking-wider text-[9px]">ASPORTO</span>
+                                            ) : (
+                                                <><Users size={10} /> {res.partySize}p</>
+                                            )}
                                             {res.notes && <span className="text-amber-500">• {res.notes}</span>}
                                         </div>
                                     </div>
                                 </div>
                                 <div className="text-right">
-                                    <div className="text-amber-400 font-mono font-bold text-sm">{formatTime(res.startTime)}</div>
+                                    <div className={`${res.type === 'takeaway' ? 'text-indigo-400' : 'text-amber-400'} font-mono font-bold text-sm`}>{formatTime(res.startTime)}</div>
                                 </div>
                             </div>
                         ))

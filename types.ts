@@ -27,6 +27,7 @@ export interface Reservation {
   durationMinutes: number;
   tableIds: string[]; // Can be multiple if tables are combined
   notes?: string;
+  type: 'dine-in' | 'takeaway';
 }
 
 export interface BookingRequest {
@@ -55,6 +56,7 @@ export interface MakeReservationArgs extends CheckAvailabilityArgs {
   customerName: string;
   contactInfo: string;
   notes?: string;
+  type?: 'dine-in' | 'takeaway';
 }
 
 export interface CancelReservationArgs {

@@ -23,7 +23,7 @@ const checkAvailabilityTool: FunctionDeclaration = {
 
 const makeReservationTool: FunctionDeclaration = {
   name: 'makeReservation',
-  description: 'Finalize a reservation.',
+  description: 'Finalize a reservation or a takeaway order.',
   parameters: {
     type: Type.OBJECT,
     properties: {
@@ -33,6 +33,7 @@ const makeReservationTool: FunctionDeclaration = {
       customerName: { type: Type.STRING },
       contactInfo: { type: Type.STRING, description: "Phone number" },
       notes: { type: Type.STRING },
+      type: { type: Type.STRING, enum: ['dine-in', 'takeaway'], description: "Type of reservation: dine-in (default) or takeaway (food pickup)" }
     },
     required: ['partySize', 'date', 'time', 'customerName', 'contactInfo'],
   },

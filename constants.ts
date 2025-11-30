@@ -1,4 +1,5 @@
 
+
 import { Table, Reservation } from './types';
 
 export const RESTAURANT_NAME = "La Dolce Vita";
@@ -90,27 +91,33 @@ Voce: Elegante, profonda (Aoede).
 **REGOLE TASSATIVE SUI TOOL (CRITICO)**
 1.  **Check vs Make**: 
     -   \`checkAvailability\` serve SOLO a vedere se c'è posto (mette i tavoli in GIALLO). NON è una prenotazione.
-    -   \`makeReservation\` serve a FERMARE il tavolo (mette i tavoli in ROSSO).
+    -   \`makeReservation\` serve a FERMARE il tavolo o confermare l'ordine (mette i tavoli in ROSSO o crea ordine asporto).
 2.  **Conferma**: 
-    -   NON dire MAI "Ho confermato la prenotazione" se non hai chiamato \`makeReservation\` e ottenuto successo.
-    -   Se il cliente dice "Ok prenota", DEVI chiamare \`makeReservation\`.
+    -   NON dire MAI "Ho confermato la prenotazione/ordine" se non hai chiamato \`makeReservation\` e ottenuto successo.
+    -   Se il cliente dice "Ok procedi", DEVI chiamare \`makeReservation\`.
 3.  **Dati Mancanti**:
     -   Per chiamare \`makeReservation\` ti servono OBBLIGATORIAMENTE: Nome e Telefono. Se non li hai, CHIEDILI prima di chiamare il tool.
     -   NON chiedere email. Solo Nome e Telefono.
 
 **COMPITI PRINCIPALI**
-1.  **Gestione Prenotazioni**:
+1.  **Gestione Prenotazioni (Cena)**:
+    -   Tool: \`makeReservation\` con type='dine-in'.
     -   Chiedi numero di persone. Se >= 10: "Per gruppi da 10 o più persone, deve parlare con il titolare. Posso prendere il tuo nome e numero per farti richiamare?" (Usa tool 'makeReservation' con nota "RICHIEDE_RICHIAMATA_MANAGER").
     -   Verifica disponibilità -> Se c'è posto -> Chiedi conferma e dati -> Prenota.
     
-2.  **Gestione Turni (Turni Fissi)**:
+2.  **Gestione Turni (Turni Fissi per Cena)**:
     -   **1° Turno**: 19:30 - 21:30. 
         -   Se prenotano alle 19:00: Accetta, ma specifica che il tavolo è pronto dalle 19:30.
         -   Se prenotano alle 20:30: Accetta, ma **AVVISA TASSATIVAMENTE**: "Va benissimo, ma le ricordo che il tavolo dovrà essere liberato entro le 21:30 per il secondo turno."
     -   **2° Turno**: 21:30 - Chiusura.
 
-3.  **Servizi Aggiuntivi**:
-    -   **Asporto**: Accetta ordini. "Certamente, può ordinare da asporto. Il tempo di preparazione è di circa 30 minuti. Il ritiro è presso il ristorante." (Non serve tool, gestisci a voce).
+3.  **Gestione Asporto (Takeaway)**:
+    -   **Tool**: \`makeReservation\` con type='takeaway'.
+    -   NON controllare la disponibilità tavoli.
+    -   Conferma l'ordine e di che sarà pronto in circa 30 minuti.
+    -   Esempio: "Certamente, preparo l'ordine per l'asporto. Sarà pronto tra 30 minuti per il ritiro."
+
+4.  **Servizi Aggiuntivi**:
     -   **Integrazioni**: Se chiedono di TheFork o OpenTable: "Sì, siamo perfettamente integrati. Le prenotazioni fatte lì appaiono subito nel nostro sistema."
     -   **Menu**: Conosci tutto il menu (Pizze, Vini, etc.). Proponi abbinamenti se richiesto.
     -   Indirizzo: ${RESTAURANT_INFO.location.address}.
@@ -148,7 +155,8 @@ export const INITIAL_RESERVATIONS: Reservation[] = [
         startTime: todayAt(19, 30), // Occupies TURN 1
         durationMinutes: 90,
         tableIds: ['T1'], // Window 1 busy Turn 1
-        notes: 'Anniversario'
+        notes: 'Anniversario',
+        type: 'dine-in'
     },
     {
         id: 'sim2',
@@ -158,7 +166,8 @@ export const INITIAL_RESERVATIONS: Reservation[] = [
         startTime: todayAt(21, 30), // Occupies TURN 2
         durationMinutes: 120, 
         tableIds: ['T7'], // Round table busy Turn 2
-        notes: 'VIP'
+        notes: 'VIP',
+        type: 'dine-in'
     },
     {
         id: 'sim3',
@@ -168,5 +177,17 @@ export const INITIAL_RESERVATIONS: Reservation[] = [
         startTime: todayAt(19, 30), // Occupies TURN 1
         durationMinutes: 90,
         tableIds: ['T3'], // Floor 1 busy Turn 1
+        type: 'dine-in'
+    },
+    {
+        id: 'sim4',
+        customerName: 'Mario Verdi',
+        contactInfo: '333-0104',
+        partySize: 0, // Not relevant for takeaway
+        startTime: todayAt(20, 0),
+        durationMinutes: 30,
+        tableIds: [], // No table
+        notes: '2 Pizze Margherite',
+        type: 'takeaway'
     }
 ];

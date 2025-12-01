@@ -1,4 +1,6 @@
+
 import { Table, Reservation } from './types';
+import { MENU_DATA } from './data/menuData';
 
 export const RESTAURANT_NAME = "La Dolce Vita";
 
@@ -8,6 +10,18 @@ const todayAt = (hours: number, minutes: number) => {
   d.setHours(hours, minutes, 0, 0);
   return d;
 };
+
+// Helper to format prices for UI
+const formatMenuForUI = (data: any) => {
+    const formatted: any = {};
+    Object.keys(data).forEach(key => {
+        formatted[key] = data[key].map((item: any) => ({
+            ...item,
+            price: `€${item.price}`
+        }));
+    });
+    return formatted;
+}
 
 // Structured Data for UI and AI (TRANSLATED TO ITALIAN)
 export const RESTAURANT_INFO = {
@@ -26,41 +40,7 @@ export const RESTAURANT_INFO = {
     integrations: "Siamo integrati nativamente con TheFork e OpenTable. Le prenotazioni da questi portali appaiono automaticamente qui.",
     takeaway: "Servizio Asporto disponibile. Ordina al telefono e ritira di persona. Tempo di preparazione medio: 30 minuti."
   },
-  menu: {
-    specials: [
-        { name: "Risotto al Tartufo Bianco", price: "€35", description: "Tartufo fresco di stagione d'Alba" },
-        { name: "Bistecca alla Fiorentina (1kg)", price: "€80", description: "Frollatura dry-aged 45 giorni" }
-    ],
-    antipasti: [
-        { name: "Burrata al Tartufo", price: "€18" }, 
-        { name: "Carpaccio di Manzo", price: "€22" },
-        { name: "Tagliere di Salumi Locali", price: "€20" }
-    ],
-    primi: [
-        { name: "Tagliatelle al Ragù", price: "€24" }, 
-        { name: "Risotto alla Milanese", price: "€26" },
-        { name: "Spaghetti alle Vongole", price: "€25" }
-    ],
-    secondi: [
-        { name: "Ossobuco", price: "€32" }, 
-        { name: "Branzino al Sale", price: "€35" },
-        { name: "Filetto al Pepe Verde", price: "€30" }
-    ],
-    contorni: [
-        { name: "Patate al Forno", price: "€6" },
-        { name: "Verdure Grigliate", price: "€8" }
-    ],
-    dessert: [
-        { name: "Tiramisù", price: "€12" }, 
-        { name: "Cannolo Siciliano", price: "€10" },
-        { name: "Panna Cotta", price: "€9" }
-    ],
-    vini: [
-        { name: "Chianti Classico (Calice)", price: "€8" },
-        { name: "Prosecco DOC (Bottiglia)", price: "€25" },
-        { name: "Amarone della Valpolicella (Bottiglia)", price: "€60" }
-    ]
-  },
+  menu: formatMenuForUI(MENU_DATA),
   policies: {
     allergies: "Pasta senza glutine disponibile. Gestione attenta delle allergie alla frutta a guscio (area preparazione separata).",
     events: "Cene private disponibili nella 'Sala Oro' fino a 20 ospiti.",
@@ -72,49 +52,47 @@ export const SYSTEM_INSTRUCTION = `
 **CONTESTO**
 L'utente ha appena chiamato "La Dolce Vita".
 Il tempo della demo è limitato (2 minuti). Sii concisa, professionale e rapida.
-IMPORTANTE: L'utente ha GIÀ sentito la tua introduzione: "Sono Alessia del Ristorante Dolce Vita, come posso esserti utile?".
-**NON RIPETERE L'INTRODUZIONE.**
+IMPORTANTE: L'utente ha GIÀ sentito la tua introduzione. NON RIPETERE "Sono Alessia...".
 Aspetta semplicemente che l'utente parli.
 
 **RUOLO & PERSONA**
 Sei **Alessia**, la responsabile di sala virtuale.
-**LINGUA:** Sei POLIGLOTTA. La tua lingua di default è l'ITALIANO, ma devi rispondere nella lingua che usa l'utente (Inglese, Francese, Spagnolo, Tedesco, Cinese, ecc.) in modo fluido e naturale.
-Voce: Elegante, profonda (Aoede).
+**LINGUA:** Sei POLIGLOTTA. Rileva la lingua dell'utente e rispondi nella stessa lingua.
+Tono: Accogliente ma efficiente.
 
 **REGOLE TASSATIVE (CRITICO)**
 
-1.  **CENA (Tavoli)**:
-    -   Usa \`checkAvailability\` per vedere se c'è posto.
-    -   Usa \`makeReservation\` (type='dine-in') SOLO dopo che il cliente ha confermato data e ora.
-    -   Turni: 19:30-21:30 (1° Turno), 21:30-Chiusura (2° Turno). Avvisa delle scadenze orarie se necessario.
+1.  **GESTIONE TURNI RIGIDA (IMPORTANTE)**:
+    -   Il ristorante lavora su DUE TURNI fissi.
+    -   **1° Turno:** 19:30 - 21:15 (Il tavolo deve essere liberato alle 21:15).
+    -   **2° Turno:** 21:30 - Chiusura.
+    -   **Regola 21:00:** Se l'utente chiede alle 21:00, **RIFIUTA** gentilmente. Spiega che saresti a cavallo dei turni. **PROPONI le 21:30** (inizio secondo turno perfettto).
+    -   **Regola Ritardo 1° Turno:** Se prenotano alle 20:30, AVVISA: "Va bene, ma le ricordo che il tavolo va liberato per le 21:15".
 
-2.  **ASPORTO (Takeaway) - PROCEDURA RIGIDA**:
+2.  **CENA (Tavoli)**:
+    -   Usa \`checkAvailability\` per vedere se c'è posto.
+    -   Se il tool restituisce un messaggio sui turni (es. "Proponi 21:30"), SEGUI IL SUGGERIMENTO.
+    -   Usa \`makeReservation\` (type='dine-in') SOLO dopo che il cliente ha accettato l'orario corretto (es. 21:30).
+
+3.  **ASPORTO (Takeaway) - PROCEDURA RIGIDA**:
     -   **STEP 1: PREVENTIVO (Tool \`calculateQuote\`)**
-        -   Appena l'utente elenca i piatti, CHIAMA \`calculateQuote\` con la lista dei piatti.
-        -   **DIVIETO DI MATEMATICA**: Non calcolare MAI il totale a mente. Non fare somme o sottrazioni.
-        -   Usa SOLO il totale e il dettaglio prezzi forniti dal tool.
-        -   Il tool ti dirà se i piatti esistono o no. Se mancano, dillo al cliente.
-        -   RISPONDI al cliente: "Ho segnato [Elenco Piatti Trovati]. Il totale viene €XX. Procedo?"
+        -   Appena l'utente elenca i piatti, CHIAMA \`calculateQuote\`.
+        -   **DIVIETO DI MATEMATICA**: Non calcolare MAI il totale a mente.
+        -   Leggi SOLO il totale e il dettaglio forniti dal tool.
+        -   RISPONDI: "Ho segnato [Dettaglio]. Il totale è €XX. Procedo?"
     
-    -   **GESTIONE MODIFICHE (CRITICO)**:
-        -   Se l'utente dice "Togli il risotto e metti il tiramisù", **NON fare calcoli +/-**.
-        -   Aggiorna la tua lista mentale degli oggetti desiderati e CHIAMA DI NUOVO \`calculateQuote\` con la **NUOVA LISTA COMPLETA** (es. ['Tiramisu']).
-        -   Leggi sempre e solo il NUOVO totale restituito dal tool. Dimentica il totale precedente.
+    -   **GESTIONE MODIFICHE**:
+        -   Se l'utente cambia idea, CHIAMA DI NUOVO \`calculateQuote\` con la **NUOVA LISTA COMPLETA**.
+        -   Ignora i calcoli precedenti.
     
     -   **STEP 2: CONFERMA (Tool \`makeReservation\`)**
-        -   SOLO se il cliente conferma il preventivo, chiama \`makeReservation\` (type='takeaway').
-        -   Usa la lista esatta di piatti confermati nel campo \`items\`.
+        -   SOLO se conferma, chiama \`makeReservation\` (type='takeaway').
 
-3.  **ANTI-ALLUCINAZIONE**:
-    -   Se ti chiedono "Quanto costa X?", usa il tool \`calculateQuote\` per avere il prezzo preciso.
-    -   Se il tool dice che un piatto non esiste, non accettarlo.
+4.  **ANTI-ALLUCINAZIONE**:
+    -   Se il tool dice che un piatto non esiste, dillo al cliente. Non inventare prezzi.
 
 **DATI MANCANTI**
 -   Per confermare serve sempre NOME e TELEFONO. Chiedili se mancano.
-
-**SERVIZI**
--   Integrazione TheFork/OpenTable: Sì.
--   Indirizzo: ${RESTAURANT_INFO.location.address}.
 `;
 
 // Layout: 4x4 Grid approximation

@@ -1,13 +1,12 @@
-
 import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { UtensilsCrossed, Clock, Info, Mail, PhoneCall, Calendar as CalendarIcon, Users, MapPin, Car, AlertCircle, ChefHat, Moon, Sun, Sparkles, BookOpen, Smartphone, ShoppingBag, Radio, Globe } from 'lucide-react';
 import VoiceAgent from './components/VoiceAgent';
 import TableMap from './components/TableMap';
-import InAppBrowserCheck from './components/InAppBrowserCheck'; // Imported Check
 import { RestaurantManager } from './services/restaurantLogic';
+import { menuLogic } from './services/menuLogic';
 import { INITIAL_TABLES, INITIAL_RESERVATIONS, RESTAURANT_NAME, RESTAURANT_INFO } from './constants';
+import { menuData } from './data/menuData'; // Import needed for display
 import { TableStatus, Reservation, CheckAvailabilityArgs, MakeReservationArgs, GetInfoArgs, CancelReservationArgs } from './types';
-import { processOrder } from './services/menuLogic'; // Imported Menu Logic
 
 // --- Native Date Helpers to replace date-fns ---
 const addDays = (date: Date, days: number) => {
@@ -30,11 +29,9 @@ const parseInputDate = (dateStr: string) => {
     if (!dateStr) return new Date(); // Fallback to today
     // Parse YYYY-MM-DD as local date
     const parts = dateStr.split('-').map(Number);
-    if (parts.length === 3) {
-         const [y, m, d] = parts;
-         return new Date(y, m - 1, d);
-    }
-    return new Date();
+    if (parts.length !== 3) return new Date();
+    const [y, m, d] = parts;
+    return new Date(y, m - 1, d);
 };
 
 // Helper to get defaults
@@ -62,10 +59,8 @@ function App() {
   // Derived current view time based on Active Shift
   const viewTime = useMemo(() => {
     const base = startOfDay(selectedDate);
-    // Shift 1 View Time: 20:00 (Middle of Shift)
-    // Shift 2 View Time: 22:00 (Middle of Shift)
     const hour = activeShift === 'turn1' ? 20 : 22;
-    const minute = 0;
+    const minute = 15;
     const d = new Date(base);
     d.setHours(hour);
     d.setMinutes(minute);
@@ -76,14 +71,8 @@ function App() {
   const tableStatuses = useMemo(() => {
     const statusMap = manager.getTableStatusAt(viewTime);
     
-    // Only show highlights if they are relevant to the current shift?
-    // For now, show them to give feedback, but they might look weird if the time is wrong.
     highlightedTables.forEach(id => {
-      // If table is FREE in this shift, show as selected. 
-      // If occupied, keep occupied.
-      if (statusMap.get(id) === TableStatus.FREE) {
-          statusMap.set(id, TableStatus.SELECTED);
-      }
+      statusMap.set(id, TableStatus.SELECTED);
     });
 
     return statusMap;
@@ -121,29 +110,11 @@ function App() {
       if (!date) date = getDefaultDateStr();
       if (!time) time = getDefaultTimeStr();
 
-      // PARSE TIME for SHIFT LOGIC
-      const [h, m] = (time || "").split(':').map(Number);
-      
-      // LOGIC: Suggest correct shift times
-      if (h === 21 && m < 30) {
-          // User asked for 21:00, 21:15 etc.
-          return { 
-              available: true, // Technically true, but we want to guide them
-              message: "DISPONIBILE MA ATTENZIONE: Questo orario (21:xx) è nel cambio turno. Per il secondo turno devi proporre le 21:30. Chiedi al cliente se le 21:30 va bene." 
-          };
-      }
-
-      if (h < 19 || (h === 19 && m < 30)) {
-           return { 
-              available: true,
-              message: "DISPONIBILE MA ATTENZIONE: Il ristorante apre alle 19:30. Proponi le 19:30 come orario di inizio." 
-          };
-      }
-
       const result = manager.findTableForRequest(partySize, date, time);
       
       // Auto-switch visual shift based on requested time
-      if (h >= 21 && m >= 30) {
+      const parts = (time || "").split(':').map(Number);
+      if (parts.length === 2 && parts[0] >= 21 && parts[1] >= 15) {
           setActiveShift('turn2');
       } else {
           setActiveShift('turn1');
@@ -155,12 +126,17 @@ function App() {
       if (result?.requiresManager) {
            setLastNotification({ msg: `Gruppo di ${partySize} richiede richiamata Manager.`, type: 'alert' });
            setTimeout(() => setLastNotification(null), 8000);
-           return { available: false, requiresManager: true, message: "Party size too large for auto-booking. Tell user the manager will call back." };
+           return { available: false, requiresManager: true, message: "Party size too large for auto-booking." };
       }
 
       if (result && result.tableIds.length > 0) {
         setHighlightedTables(result.tableIds);
-        return { available: true, tableIds: result.tableIds, message: "Tables available. Confirm with user." };
+        // CRITICAL INSTRUCTION FOR AI
+        return { 
+            available: true, 
+            tableIds: result.tableIds, 
+            message: "Tables available. SYSTEM INSTRUCTION: You MUST now ask the user for their name and phone (if you don't have it) and then call 'makeReservation' to finalize. Do NOT say you booked it yet." 
+        };
       } else {
         setHighlightedTables([]);
         return { available: false, message: "No suitable tables found for that time." };
@@ -169,25 +145,23 @@ function App() {
 
     if (name === 'calculateQuote') {
         const { items } = args;
-        // Use the centralized fuzzy logic
-        const { total, items: detailedItems } = processOrder(items || []);
+        const result = menuLogic.processOrder(items || []);
 
-        const foundNames = detailedItems.map(i => i.name);
-        const detailString = detailedItems.map(i => `${i.name} (€${i.price})`).join(', ');
-
-        if (detailedItems.length === 0 && (items || []).length > 0) {
-             return {
-                 success: false,
-                 message: "Non ho trovato nessuno dei piatti richiesti nel menu. Per favore controlla l'ordine con il cliente."
-             };
+        if (result.missingItems.length > 0) {
+            return { 
+                success: false, 
+                message: `ATTENZIONE: Non ho trovato nel menu: ${result.missingItems.join(', ')}. Ho trovato solo: ${result.foundItems.map(i => i.name).join(', ')}`,
+                foundItems: result.foundItems 
+            };
         }
 
-        // Return structured data for the AI to read
+        const breakdown = result.foundItems.map(i => `${i.name} (€${i.price})`).join(', ');
+
         return {
             success: true,
-            totalPrice: `€${total}`,
-            itemDetails: detailString, 
-            message: `PREVENTIVO CALCOLATO: Il nuovo totale per la lista completa [${foundNames.join(', ')}] è €${total}. Dettaglio voci: ${detailString}.`
+            totalPrice: `€${result.total}`,
+            itemDetails: breakdown,
+            message: `PREVENTIVO AGGIORNATO: La lista completa comprende [${result.foundItems.map(i => i.name).join(', ')}]. Il totale matematico è ESATTAMENTE €${result.total}. Dettaglio: ${breakdown}.`
         };
     }
 
@@ -214,18 +188,15 @@ function App() {
           // Takeaway logic
           duration = 30; // standard prep time placeholder
           
-          // STRICT VALIDATION: Re-calculate to ensure consistency
-          const { total, items: detailedItems, invalidItems } = processOrder(items);
+          // Re-calculate to be safe (ensure consistency)
+          const calc = menuLogic.processOrder(items);
           
-          if (invalidItems.length > 0) {
-               return { 
-                   success: false, 
-                   message: `ERRORE: I seguenti piatti non sono nel menu: ${invalidItems.join(', ')}. Chiedi al cliente di correggere.` 
-               };
+          if (calc.missingItems.length > 0) {
+               return { success: false, message: `Cannot proceed. Items not found: ${calc.missingItems.join(', ')}` };
           }
           
-          orderTotal = `€${total}`;
-          finalNotes = `Ordine: ${detailedItems.map(i => i.name).join(', ')}`;
+          orderTotal = `€${calc.total}`;
+          finalNotes = `Ordine: ${calc.foundItems.map(i => i.name).join(', ')}`;
 
       } else {
           // Dine-in logic
@@ -233,15 +204,7 @@ function App() {
           if (result && result.tableIds.length > 0) {
               tableIds = result.tableIds;
           } else {
-             // If we are here, it means checkAvailability passed but now it failed? 
-             // Or user skipped check.
-             // Try to force find tables if it's a valid shift time.
-             const forcedResult = manager.findTableForRequest(partySize, date, time);
-             if (forcedResult && forcedResult.tableIds.length > 0) {
-                 tableIds = forcedResult.tableIds;
-             } else {
-                 return { success: false, message: "Table no longer available or time invalid. Please re-check." };
-             }
+             return { success: false, message: "Availability changed, please check again." };
           }
       }
       
@@ -260,16 +223,19 @@ function App() {
         manager.addReservation(newRes);
         // Force refresh
         setReservations([...manager.getReservations()]); 
-        setHighlightedTables([]); // Clear highlights as it is now occupied (Red)
+        setHighlightedTables([]); 
         
         // Sync UI to reservation details
         setSelectedDate(parseInputDate(date));
         
-        const [reqHour, reqMin] = time.split(':').map(Number);
-        if (reqHour >= 21 && reqMin >= 15) {
-            setActiveShift('turn2');
-        } else {
-            setActiveShift('turn1');
+        const parts = time.split(':').map(Number);
+        if (parts.length === 2) {
+             const [reqHour, reqMin] = parts;
+             if (reqHour >= 21 && reqMin >= 15) {
+                setActiveShift('turn2');
+            } else {
+                setActiveShift('turn1');
+            }
         }
 
         const msg = type === 'takeaway' ? `Ordine Asporto (${orderTotal}): ${customerName}` : `Prenotazione Confermata: ${customerName}`;
@@ -309,9 +275,6 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 pb-20 font-sans selection:bg-amber-500/30">
-      
-      {/* SOCIAL BROWSER BLOCKER */}
-      <InAppBrowserCheck />
       
       {/* Header */}
       <header className="px-6 py-4 border-b border-slate-800 bg-slate-900/90 backdrop-blur-md sticky top-0 z-50 shadow-lg">
@@ -427,7 +390,7 @@ function App() {
                                          <span className="text-slate-300 font-medium">Algoritmo Tavoli:</span> Algoritmo per combinare i tavoli e cercare la migliore collocazione, ogni tavolo ha una indicazione sui tavoli ai quali può essere unito.
                                      </li>
                                      <li>
-                                         <span className="text-slate-300 font-medium">Turni Rigidi:</span> Se prenoti alle 20:30, ti avviserà che devi lasciare il tavolo alle 21:15. Se chiedi 21:00, ti proporrà 21:30.
+                                         <span className="text-slate-300 font-medium">Turni Rigidi:</span> Se prenoti alle 20:30, ti avviserà che devi lasciare il tavolo alle 21:30.
                                      </li>
                                      <li>
                                          <span className="text-slate-300 font-medium">Manager Escalation:</span> Gruppi di 10+ persone vengono segnalati al manager (simulato).
@@ -445,7 +408,7 @@ function App() {
                                 <Sparkles size={12} /> Specialità dello Chef
                             </h4>
                             <div className="grid grid-cols-1 gap-3">
-                                {RESTAURANT_INFO.menu.specials.map((item: any) => (
+                                {menuData.specials.map(item => (
                                     <div key={item.name} className="bg-amber-900/20 border border-amber-500/30 p-3 rounded-lg flex justify-between items-start">
                                         <div>
                                             <span className="text-amber-200 text-sm font-bold block">{item.name}</span>
@@ -458,7 +421,7 @@ function App() {
                         </div>
 
                         {/* Dynamic Render of all other categories */}
-                        {Object.entries(RESTAURANT_INFO.menu).map(([category, items]) => {
+                        {Object.entries(menuData).map(([category, items]) => {
                              if(category === 'specials') return null;
                              return (
                                 <div key={category}>
@@ -557,7 +520,7 @@ function App() {
                             Container is relative.
                             Visual elements are pointer-events-none.
                         */}
-                        <div className="relative h-[50px] w-[50px] flex-shrink-0 group cursor-pointer bg-slate-800 border border-slate-600 rounded-lg shadow-md hover:bg-slate-700 hover:border-amber-500 transition-colors overflow-hidden">
+                        <div className="relative h-[50px] w-[50px] flex-shrink-0 group cursor-pointer bg-slate-800 border border-slate-600 rounded-lg shadow-md hover:bg-slate-700 hover:border-amber-500 transition-colors">
                             <input 
                                 type="date" 
                                 className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-50"

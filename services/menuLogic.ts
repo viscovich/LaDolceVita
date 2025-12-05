@@ -1,65 +1,61 @@
+import { menuData } from '../data/menuData';
+import { MenuItem } from '../types';
 
-import { MENU_DATA } from '../data/menuData';
-
-interface OrderItem {
-    name: string;
-    price: number;
-}
-
-interface ProcessedOrder {
-    total: number;
-    items: OrderItem[];
-    invalidItems: string[];
-}
-
-// Flatten menu for easy searching
-const getFlatMenu = () => {
-    const flat: { name: string, price: number, category: string }[] = [];
-    Object.entries(MENU_DATA).forEach(([category, items]) => {
-        (items as any[]).forEach(item => {
-            flat.push({ name: item.name, price: typeof item.price === 'string' ? parseInt(item.price.replace('€','')) : item.price, category });
+export const menuLogic = {
+    // Flatten menu for searching
+    getAllItems: (): MenuItem[] => {
+        let all: MenuItem[] = [];
+        Object.values(menuData).forEach(items => {
+            all = [...all, ...items];
         });
-    });
-    return flat;
-};
+        return all;
+    },
 
-export const processOrder = (requestedItems: string[]): ProcessedOrder => {
-    const flatMenu = getFlatMenu();
-    const validItems: OrderItem[] = [];
-    const invalidItems: string[] = [];
-    let total = 0;
+    findItem: (query: string): MenuItem | null => {
+        const items = menuLogic.getAllItems();
+        const lowerQ = query.toLowerCase().trim();
 
-    if (!requestedItems || requestedItems.length === 0) {
-        return { total: 0, items: [], invalidItems: [] };
-    }
-
-    requestedItems.forEach(reqItem => {
-        const lowerReq = reqItem.toLowerCase().trim();
-        
-        // Find best match
         // 1. Exact match
-        let match = flatMenu.find(m => m.name.toLowerCase() === lowerReq);
+        const exact = items.find(i => i.name.toLowerCase() === lowerQ);
+        if (exact) return exact;
+
+        // 2. Contains match (prioritize specific)
+        // Sort items by length descending to match "Risotto alla Milanese" before "Risotto" if both existed
+        const potentialMatches = items.filter(i => i.name.toLowerCase().includes(lowerQ));
         
-        // 2. Contains match (if strict match fails)
-        if (!match) {
-            // Sort by length desc to match "Risotto alla Milanese" before "Risotto"
-            const potentialMatches = flatMenu.filter(m => m.name.toLowerCase().includes(lowerReq));
-            if (potentialMatches.length > 0) {
-                // Pick the shortest name that contains the search term? 
-                // Or best logic: if I say "Risotto", I probably mean one of them. 
-                // Let's pick the first one but prefer specific ones if multiple.
-                // Actually, let's try to match words.
-                match = potentialMatches[0];
+        if (potentialMatches.length > 0) {
+             // Return the shortest match that contains the query? No, usually specific is better.
+             // If user says "Risotto", and we have "Risotto Milanese" and "Risotto Tartufo", it's ambiguous.
+             // But for this demo, let's pick the first one or the one that starts with it.
+             return potentialMatches[0];
+        }
+
+        // 3. Reverse contains (User says "Milanese" for "Risotto alla Milanese")
+        const reverseMatch = items.find(i => i.name.toLowerCase().includes(lowerQ) || lowerQ.includes(i.name.toLowerCase()));
+        if (reverseMatch) return reverseMatch;
+
+        return null;
+    },
+
+    processOrder: (requestedItems: string[]) => {
+        const foundItems: MenuItem[] = [];
+        const missingItems: string[] = [];
+        let total = 0;
+
+        requestedItems.forEach(req => {
+            const match = menuLogic.findItem(req);
+            if (match) {
+                foundItems.push(match);
+                total += (match.priceNum || 0);
+            } else {
+                missingItems.push(req);
             }
-        }
+        });
 
-        if (match) {
-            validItems.push({ name: match.name, price: match.price });
-            total += match.price;
-        } else {
-            invalidItems.push(reqItem);
-        }
-    });
-
-    return { total, items: validItems, invalidItems };
+        return {
+            total,
+            foundItems,
+            missingItems
+        };
+    }
 };

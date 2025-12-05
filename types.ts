@@ -1,5 +1,3 @@
-
-
 export enum TableStatus {
   FREE = 'FREE',
   OCCUPIED = 'OCCUPIED',
@@ -43,6 +41,19 @@ export interface RestaurantData {
     open: number; // 18 (6 PM)
     close: number; // 23 (11 PM)
   };
+}
+
+// Menu Types
+export interface MenuItem {
+    name: string;
+    price: string; // Display price e.g. "€12"
+    priceNum?: number; // Numeric price for calculation
+    description?: string;
+}
+
+export interface MenuData {
+    specials: MenuItem[];
+    [category: string]: MenuItem[];
 }
 
 // Tool Arguments Types
